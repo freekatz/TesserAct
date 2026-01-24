@@ -1,5 +1,7 @@
 import os
+import sys
 import shutil
+from pathlib import Path
 from tqdm import tqdm
 import torch
 import random
@@ -10,6 +12,10 @@ import imageio.v3 as imageio
 import argparse
 import torch.multiprocessing as mp
 from functools import partial
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from tesseract.config import PathConfig
 
 
 def process_video(scene_id, data_path, pipe, latent_common, device):
@@ -98,6 +104,7 @@ def process_videos_on_gpu(scene_list, data_path, device_id, args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="bridge")
+    parser.add_argument("--exp_name", type=str, default="default", help="Experiment name for path config")
     parser.add_argument(
         "--num_gpus", type=int, default=None, help="Number of GPUs to use. If None, uses all available GPUs."
     )
@@ -110,7 +117,9 @@ def main():
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
 
-    data_path = f"data/{args.dataset}/processed"
+    # 使用 PathConfig 获取数据集路径
+    path_config = PathConfig(args.exp_name)
+    data_path = str(path_config.get_processed_dataset_path(args.dataset))
     scene_list = sorted(os.listdir(data_path), key=lambda x: int(x))
 
     # Determine number of GPUs to use

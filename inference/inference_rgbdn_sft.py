@@ -1,8 +1,10 @@
 import os
+import sys
 import gc
 import torch
 import cv2
 import numpy as np
+from pathlib import Path
 from diffusers.utils import load_image, export_to_video
 from diffusers import CogVideoXDPMScheduler
 
@@ -10,6 +12,7 @@ from diffusers import CogVideoXDPMScheduler
 from tesseract.modules.tesseract_pipeline import TesserActImageToDepthNormalVideoPipeline
 from tesseract.modules.tesseract_model import TesserActDepthNormal
 from tesseract.utils import print_memory, crop_and_resize_frames
+from tesseract.config import PathConfig
 
 torch.set_grad_enabled(False)
 # seed everything
@@ -153,6 +156,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_path", type=str, default="asset/images/fruit_vangogh.png")
     parser.add_argument("--prompt", type=str, default="pick up the apple google robot")
     parser.add_argument("--memory_efficient", action="store_true", default=False)
+    parser.add_argument("--exp_name", type=str, default="default", help="Experiment name for path config")
     args = parser.parse_args()
 
     pretrained_model = "THUDM/CogVideoX-5b-I2V"  # always use this model
@@ -161,7 +165,9 @@ if __name__ == "__main__":
     val_images = [args.image_path]
     val_prompts = [args.prompt]
 
-    out_dir = "./results"
+    # 使用 PathConfig 管理路径
+    path_config = PathConfig(args.exp_name)
+    out_dir = str(path_config.get_results_dir())
     os.makedirs(out_dir, exist_ok=True)
 
     with torch.no_grad():

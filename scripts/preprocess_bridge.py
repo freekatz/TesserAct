@@ -12,11 +12,17 @@ Usage:
 """
 
 import os
+import sys
 import logging
 import imageio.v2 as imageio
 import glob
 import json
+from pathlib import Path
 from tqdm import tqdm
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from tesseract.config import PathConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -26,16 +32,20 @@ logger = logging.getLogger(__name__)
 class BridgePreprocessor:
     def __init__(
         self,
-        raw_data_dir="data/raw",
-        output_dir="data/bridge/processed",
-        cache_dir="cache",
+        raw_data_dir=None,
+        output_dir=None,
+        cache_dir=None,
         required_keywords=[],
         excluded_phrases=[],
         fps=30,
+        exp_name="default",
     ):
-        self.raw_data_dir = raw_data_dir
-        self.output_dir = output_dir
-        self.cache_dir = cache_dir
+        # 使用 PathConfig 管理路径
+        path_config = PathConfig(exp_name)
+
+        self.raw_data_dir = raw_data_dir or str(path_config.get_raw_dataset_path("bridge"))
+        self.output_dir = output_dir or str(path_config.get_processed_dataset_path("bridge"))
+        self.cache_dir = cache_dir or str(path_config.exp_dir / "cache")
         self.required_keywords = required_keywords
         self.excluded_phrases = excluded_phrases
         self.fps = fps

@@ -1092,5 +1092,20 @@ def main(args):
 
 
 if __name__ == "__main__":
+    from tesseract.config import PathConfig
+
     args = get_args()
+
+    # 使用 PathConfig 设置路径默认值
+    exp_name = getattr(args, 'exp_name', args.output_dir.split('/')[-1] if args.output_dir else 'default')
+    path_config = PathConfig(exp_name)
+
+    # 设置 output_dir 默认值
+    if not args.output_dir or args.output_dir == "cogvideox-sft":
+        args.output_dir = str(path_config.exp_dir)
+
+    # 设置 dataset_file 默认值
+    if args.dataset_file is None:
+        args.dataset_file = str(path_config.exp_dir / "samples.json")
+
     main(args)

@@ -1,0 +1,3 @@
+[submodule "3rd/RollingDepth"]
+	path = 3rd/RollingDepth
+	url = https://github.com/freekatz/RollingDepth.git

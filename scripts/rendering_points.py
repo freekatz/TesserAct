@@ -5,9 +5,14 @@ import trimesh
 import imageio
 import argparse
 import numpy as np
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from utils import detect_edges_and_mask_points
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from tesseract.config import PathConfig
 
 
 class ArgumentParserForBlender(argparse.ArgumentParser):
@@ -195,8 +200,14 @@ if __name__ == "__main__":
     parser.add_argument("--rgb_video", type=str)
     parser.add_argument("--depth_video", type=str)
     parser.add_argument("--combined_video", type=str)
-    parser.add_argument("--render_output", default="./results/render_output/pointcloud", type=str)
+    parser.add_argument("--render_output", default=None, type=str, help="Render output directory. If None, will use exp_dir/render_output/pointcloud")
+    parser.add_argument("--exp_name", type=str, default="default", help="Experiment name for path config")
     args = parser.parse_args()
+
+    # 使用 PathConfig 管理路径
+    if args.render_output is None:
+        path_config = PathConfig(args.exp_name)
+        args.render_output = str(path_config.get_results_dir() / "render_output" / "pointcloud")
 
     os.makedirs(args.render_output, exist_ok=True)
     image, depth = load_rgbd_data(args.rgb_video, args.depth_video, args.combined_video)

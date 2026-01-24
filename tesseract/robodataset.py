@@ -23,6 +23,8 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
 import decord  # isort:skip
 
+from .config import PathConfig
+
 decord.bridge.set_bridge("torch")
 
 logger = get_logger(__name__)
@@ -98,6 +100,7 @@ class RoboDataset(Dataset):
         load_tensors: bool = False,
         random_flip: Optional[float] = None,
         image_to_video: bool = False,
+        exp_name: str = "default",
     ) -> None:
         super().__init__()
 
@@ -113,6 +116,9 @@ class RoboDataset(Dataset):
         self.load_tensors = load_tensors
         self.random_flip = random_flip
         self.image_to_video = image_to_video
+
+        # 初始化路径配置
+        self.path_config = PathConfig(exp_name)
 
         self.resolutions = [
             (f, h, w) for h in self.height_buckets for w in self.width_buckets for f in self.frame_buckets
@@ -212,7 +218,9 @@ class RoboDataset(Dataset):
 
     def _load_openx_dataset_from_local_path(self, dataname) -> Tuple[List[str], List[Path]]:
         samples = []
-        for subdir in Path(f"data/{dataname}/processed").iterdir():
+        # 使用 PathConfig 获取数据集路径
+        dataset_path = self.path_config.get_processed_dataset_path(dataname)
+        for subdir in dataset_path.iterdir():
             if subdir.is_dir():
                 rgb_dir = subdir.joinpath("video", "rgb.mp4")
                 rgb_valid = rgb_dir.exists()
@@ -233,8 +241,10 @@ class RoboDataset(Dataset):
         return train_samples, test_samples
 
     def _load_ssv2_dataset_from_local_path(self) -> Tuple[List[str], List[Path]]:
-        labels_file = Path("data/ssv2/labels/train.json")
-        video_root = Path("data/ssv2/20bn-something-something-v2")
+        # 使用 PathConfig 获取数据集路径
+        dataset_path = self.path_config.get_dataset_path("ssv2")
+        labels_file = dataset_path / "labels" / "train.json"
+        video_root = dataset_path / "20bn-something-something-v2"
         with labels_file.open("r", encoding="utf-8") as f:
             labels = json.load(f)
         samples = []
@@ -249,7 +259,9 @@ class RoboDataset(Dataset):
 
     def _get_rlbench_instructions(self) -> List[str]:
         self.rlbench_instructions = {}
-        taskvar_json = Path("data/rlbench/taskvar_instructions.jsonl")
+        # 使用 PathConfig 获取数据集路径
+        dataset_path = self.path_config.get_dataset_path("rlbench")
+        taskvar_json = dataset_path / "taskvar_instructions.jsonl"
         if not taskvar_json.exists():
             logger.warning(f"Taskvar json {taskvar_json} does not exist.")
             return
@@ -259,7 +271,9 @@ class RoboDataset(Dataset):
                 self.rlbench_instructions.setdefault(task, obj["variations"]["0"])
 
     def _load_rlbench_dataset_from_local_path(self) -> List[List[str]]:
-        rlbench_path = Path("data/rlbench/train_dataset/microsteps/seed100")
+        # 使用 PathConfig 获取数据集路径
+        dataset_path = self.path_config.get_dataset_path("rlbench")
+        rlbench_path = dataset_path / "train_dataset" / "microsteps" / "seed100"
 
         self._get_rlbench_instructions()
 
@@ -397,6 +411,7 @@ class RoboDepth(RoboDataset):
         load_tensors: bool = False,
         random_flip: Optional[float] = None,
         image_to_video: bool = False,
+        exp_name: str = "default",
     ) -> None:
         super().__init__(
             data_root=data_root,
@@ -411,6 +426,7 @@ class RoboDepth(RoboDataset):
             load_tensors=load_tensors,
             random_flip=random_flip,
             image_to_video=image_to_video,
+            exp_name=exp_name,
         )
 
     def _load_samples(self):
@@ -557,6 +573,7 @@ class RoboDepthNormal(RoboDepth):
         load_tensors: bool = False,
         random_flip: Optional[float] = None,
         image_to_video: bool = False,
+        exp_name: str = "default",
     ) -> None:
         super().__init__(
             data_root=data_root,
@@ -571,6 +588,7 @@ class RoboDepthNormal(RoboDepth):
             load_tensors=load_tensors,
             random_flip=random_flip,
             image_to_video=image_to_video,
+            exp_name=exp_name,
         )
 
     def _load_samples(self):
@@ -765,7 +783,10 @@ if __name__ == "__main__":
 
     accelerator = accelerate.Accelerator()
 
-    robodataset = RoboDepthNormal("data", dataset_file="cache/samples_depth_normal.json", max_num_frames=100)
+    # 使用 PathConfig 管理路径
+    path_config = PathConfig("test")
+    dataset_file = path_config.exp_dir / "samples_depth_normal.json"
+    robodataset = RoboDepthNormal("data", dataset_file=str(dataset_file), max_num_frames=100, exp_name="test")
 
     bucket_sampler = BucketSampler(robodataset, batch_size=4, shuffle=True, drop_last=False)
     dataloader = torch.utils.data.DataLoader(robodataset, batch_size=None, sampler=bucket_sampler, num_workers=96)

@@ -40,8 +40,8 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dataset_file",
         type=str,
-        default="cache/samples.json",
-        help=("Path to a file if loading prompts/video paths using this format."),
+        default=None,
+        help=("Path to a file if loading prompts/video paths using this format. If None, will use exp_dir/samples.json"),
     )
     parser.add_argument(
         "--video_column",
@@ -428,6 +428,12 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _get_configuration_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--exp_name",
+        type=str,
+        default=None,
+        help="Experiment name for path configuration. If None, will use the output_dir name or 'default'.",
+    )
     parser.add_argument("--tracker_name", type=str, default=None, help="Project tracker name")
     parser.add_argument(
         "--push_to_hub",
