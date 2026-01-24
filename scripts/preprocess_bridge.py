@@ -43,9 +43,9 @@ class BridgePreprocessor:
         # 使用 PathConfig 管理路径
         path_config = PathConfig(exp_name)
 
-        self.raw_data_dir = raw_data_dir or str(path_config.get_raw_dataset_path("bridge"))
-        self.output_dir = output_dir or str(path_config.get_processed_dataset_path("bridge"))
-        self.cache_dir = cache_dir or str(path_config.exp_dir / "cache")
+        self.raw_data_dir = raw_data_dir
+        self.output_dir = output_dir
+        self.cache_dir = cache_dir
         self.required_keywords = required_keywords
         self.excluded_phrases = excluded_phrases
         self.fps = fps
@@ -133,7 +133,13 @@ class BridgePreprocessor:
 
 
 def main():
-    preprocessor = BridgePreprocessor()
+    exp_name = "bridge_preprocessing"
+    preprocessor = BridgePreprocessor(
+        raw_data_dir='./data/bridge/raw',
+        output_dir='./data-processed/bridge',
+        cache_dir='./cache/bridge',
+        exp_name=exp_name,
+    )
     preprocessor.process()
 
 
