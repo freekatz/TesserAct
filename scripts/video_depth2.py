@@ -204,16 +204,39 @@ def process_video(video_path, args, device_id, pipe=None):
 
     # Save prediction as npy
     if args.save_npy:
-        # Create output directory structure
         rel_path = video_path.relative_to(args.input_video)
-        output_path = Path(args.output_dir) / rel_path.parent.parent / "depth/npz"
-        os.makedirs(output_path, exist_ok=True)
+        scene_rel_path = rel_path.parent.parent  # e.g., "0" or "123"
 
-        save_to = output_path / "depth.npz"
-        if args.verbose:
-            logging.info(f"Saving predictions to {save_to}")
-        # Save as float16 to reduce storage (~50% smaller)
-        np.savez_compressed(save_to, arr_0=depth_pred.numpy().squeeze(1).astype(np.float16))  # [N H W]
+        if args.output_root is not None:
+            # Write to temp location on input disk (vepfs), then move to output disk (tos)
+            temp_dir = Path(args.input_video) / scene_rel_path / "depth/npz"
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_path = temp_dir / "depth.npz"
+
+            output_path = Path(args.output_root) / scene_rel_path / "depth/npz"
+            os.makedirs(output_path, exist_ok=True)
+            save_to = output_path / "depth.npz"
+
+            if args.verbose:
+                logging.info(f"Saving predictions to {save_to} (via temp {temp_path})")
+
+            # Save as float16 to reduce storage (~50% smaller)
+            np.savez_compressed(temp_path, arr_0=depth_pred.numpy().squeeze(1).astype(np.float16))  # [N H W]
+
+            # Move to output disk
+            import shutil
+            shutil.copy2(temp_path, save_to)
+            temp_path.unlink()
+        else:
+            # Direct save to output_dir
+            output_path = Path(args.output_dir) / scene_rel_path / "depth/npz"
+            os.makedirs(output_path, exist_ok=True)
+            save_to = output_path / "depth.npz"
+
+            if args.verbose:
+                logging.info(f"Saving predictions to {save_to}")
+            # Save as float16 to reduce storage (~50% smaller)
+            np.savez_compressed(save_to, arr_0=depth_pred.numpy().squeeze(1).astype(np.float16))  # [N H W]
 
     return save_to if args.save_npy else None
 

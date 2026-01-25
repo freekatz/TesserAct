@@ -42,12 +42,14 @@ def process_video(scene_id, data_path, output_root, pipe, latent_common, device,
         path_out = os.path.join(out_scene_path, "video", "normal.mp4")
 
         # Move residual file from input directory to output if exists
+        # Use copy + delete instead of move to handle cross-filesystem transfers
         residual_path = os.path.join(scene_path, "video", "normal.mp4")
         if os.path.exists(residual_path):
             # Create output directory if needed
             os.makedirs(os.path.dirname(path_out), exist_ok=True)
             print(f"Moving residual file: {residual_path} -> {path_out}")
-            shutil.move(residual_path, path_out)
+            shutil.copy2(residual_path, path_out)
+            os.remove(residual_path)
     else:
         path_out = os.path.join(scene_path, "video", "normal.mp4")
 
@@ -97,8 +99,15 @@ def process_video(scene_id, data_path, output_root, pipe, latent_common, device,
 
             out.append(pipe.image_processor.visualize_normals(depth.prediction)[0])
 
-    # Save video using imageio.v3
-    imageio.imwrite(path_out, out, fps=30)
+    # Save video: write to input disk first, then move to output disk if needed
+    if output_root is not None:
+        # Write to temp location on input disk (vepfs), then move to output disk (tos)
+        temp_path = os.path.join(scene_path, "video", "normal.mp4")
+        imageio.imwrite(temp_path, out, fps=30)
+        shutil.copy2(temp_path, path_out)
+        os.remove(temp_path)
+    else:
+        imageio.imwrite(path_out, out, fps=30)
 
 
 def process_videos_on_gpu(scene_list, data_path, output_root, device_id, args):
