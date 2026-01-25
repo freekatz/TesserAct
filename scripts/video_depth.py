@@ -108,10 +108,8 @@ def process_videos_on_gpu(args, device_id, num_gpus, input_dir=None, video_list=
     else:
         video_source = video_list
 
-    # Process all videos assigned to this GPU
-    with torch.inference_mode():  # Faster than torch.no_grad()
-        for video_path in tqdm(video_source, desc=f"GPU {device_id}"):
-            process_video(video_path, args, device_id, pipe)
+    for video_path in tqdm(video_source, desc=f"GPU {device_id}"):
+        process_video(video_path, args, device_id, pipe)
 
 
 def process_video(video_path, args, device_id, pipe=None):
@@ -147,7 +145,7 @@ def process_video(video_path, args, device_id, pipe=None):
         else:
             raise ValueError(f"Unsupported dtype: {args.dtype}")
 
-        pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(device)
+        pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, torch_dtype=dtype, use_safetensors=False, allow_pickle=True).to(device)
 
         try:
             pipe.enable_xformers_memory_efficient_attention()
