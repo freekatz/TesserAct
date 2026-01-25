@@ -79,9 +79,15 @@ def process_videos_on_gpu(video_list, args, device_id):
     except ImportError:
         logging.warning(f"Run without xformers on GPU {device_id}")
 
+    # Enable TF32 for A100 (significant speedup with minimal precision loss)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True  # Auto-tune convolution algorithms
+
     # Process all videos assigned to this GPU
-    for video_path in tqdm(video_list, desc=f"GPU {device_id}"):
-        process_video(video_path, args, device_id, pipe)
+    with torch.inference_mode():  # Faster than torch.no_grad()
+        for video_path in tqdm(video_list, desc=f"GPU {device_id}"):
+            process_video(video_path, args, device_id, pipe)
 
 
 def process_video(video_path, args, device_id, pipe=None):
@@ -269,12 +275,12 @@ if "__main__" == __name__:
     parser.add_argument(
         "--max-vae-bs",
         type=int,
-        default=4,
+        default=32,
         help=(
             "Maximum batch size for the Variational Autoencoder (VAE) processing. "
             "Higher values increase memory usage but may improve processing speed. "
             "Reduce this value if encountering out-of-memory errors. "
-            "Default: 4"
+            "Default: 32 (optimized for A100 80GB)"
         ),
     )
 

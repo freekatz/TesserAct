@@ -45,27 +45,29 @@ def process_video(scene_id, data_path, pipe, latent_common, device):
     first_frame_latent = None
 
     out = []
-    for frame_id, frame in enumerate(frames):
-        frame = Image.fromarray(frame)
+    with torch.inference_mode():  # Faster than torch.no_grad()
+        for frame_id, frame in enumerate(frames):
+            frame = Image.fromarray(frame)
 
-        latents = latent_common
-        if last_frame_latent is not None:
-            latents = 0.9 * latents + 0.1 * last_frame_latent
+            latents = latent_common
+            if last_frame_latent is not None:
+                latents = 0.9 * latents + 0.1 * last_frame_latent
 
-        depth = pipe(
-            frame,
-            match_input_resolution=True,
-            latents=latents,
-            output_latent=True,
-            ensemble_size=1,
-        )
+            depth = pipe(
+                frame,
+                match_input_resolution=True,
+                latents=latents,
+                output_latent=True,
+                ensemble_size=1,
+                num_inference_steps=1,  # LCM model only needs 1 step
+            )
 
-        if first_frame_latent is None:
-            first_frame_latent = depth.latent
+            if first_frame_latent is None:
+                first_frame_latent = depth.latent
 
-        last_frame_latent = depth.latent
+            last_frame_latent = depth.latent
 
-        out.append(pipe.image_processor.visualize_normals(depth.prediction)[0])
+            out.append(pipe.image_processor.visualize_normals(depth.prediction)[0])
 
     # Save video using imageio.v3
     imageio.imwrite(path_out, out, fps=30)
@@ -76,6 +78,11 @@ def process_videos_on_gpu(scene_list, data_path, device_id, args):
     # Set device for this process
     device = torch.device(f"cuda:{device_id}")
     torch.cuda.set_device(device)
+
+    # Enable TF32 for A100 (significant speedup with minimal precision loss)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True  # Auto-tune convolution algorithms
 
     # Initialize model on this device
     print(f"Loading pipeline components on GPU {device_id}...")
