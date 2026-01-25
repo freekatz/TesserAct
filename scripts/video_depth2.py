@@ -53,15 +53,17 @@ def str2bool(v):
 
 
 def scan_videos_for_gpu(input_dir, num_gpus, gpu_id):
-    """Scan directory and yield videos assigned to this GPU (interleaved assignment)."""
+    """Scan directory and return list of videos assigned to this GPU (interleaved assignment)."""
+    videos = []
     idx = 0
     for entry in os.scandir(input_dir):
         if entry.is_dir():
             video_path = Path(entry.path) / "video" / "rgb.mp4"
             if video_path.exists():
                 if idx % num_gpus == gpu_id:
-                    yield video_path
+                    videos.append(video_path)
                 idx += 1
+    return videos
 
 
 def process_videos_on_gpu(args, device_id, num_gpus, input_dir=None, video_list=None):
