@@ -52,11 +52,30 @@ def str2bool(v):
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
-def process_videos_on_gpu(video_list, args, device_id):
+def scan_videos_for_gpu(input_dir, num_gpus, gpu_id):
+    """Scan directory and yield videos assigned to this GPU (interleaved assignment)."""
+    idx = 0
+    for entry in os.scandir(input_dir):
+        if entry.is_dir():
+            video_path = Path(entry.path) / "video" / "rgb.mp4"
+            if video_path.exists():
+                if idx % num_gpus == gpu_id:
+                    yield video_path
+                idx += 1
+
+
+def process_videos_on_gpu(args, device_id, num_gpus, input_dir=None, video_list=None):
     """Process multiple videos on a specific GPU.
 
     This function should be called in a subprocess to properly utilize multi-GPU.
     The model is loaded inside the subprocess to avoid CUDA tensor serialization issues.
+
+    Args:
+        args: Command line arguments
+        device_id: GPU device ID
+        num_gpus: Total number of GPUs (for interleaved scanning)
+        input_dir: Directory to scan for videos (if scanning mode)
+        video_list: Pre-computed list of videos (if list mode)
     """
     device = torch.device(f"cuda:{device_id}")
     torch.cuda.set_device(device)
@@ -83,9 +102,15 @@ def process_videos_on_gpu(video_list, args, device_id):
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True  # Auto-tune convolution algorithms
 
+    # Determine video source: scan directory or use pre-computed list
+    if input_dir is not None:
+        video_source = scan_videos_for_gpu(input_dir, num_gpus, device_id)
+    else:
+        video_source = video_list
+
     # Process all videos assigned to this GPU
     with torch.inference_mode():  # Faster than torch.no_grad()
-        for video_path in tqdm(video_list, desc=f"GPU {device_id}"):
+        for video_path in tqdm(video_source, desc=f"GPU {device_id}"):
             process_video(video_path, args, device_id, pipe)
 
 
@@ -579,52 +604,48 @@ if "__main__" == __name__:
         num_gpus = args.num_gpus if args.num_gpus is not None else torch.cuda.device_count()
         logging.info(f"Using {num_gpus} GPUs")
 
-    # -------------------- Data --------------------
-    if input_video.is_dir():
-        # Use os.scandir for faster directory traversal (much faster than glob for large dirs)
-        logging.info(f"Scanning for videos in {input_video}...")
-        input_video_ls = []
-        for entry in os.scandir(input_video):
-            if entry.is_dir():
-                video_path = Path(entry.path) / "video" / "rgb.mp4"
-                if video_path.exists():
-                    input_video_ls.append(video_path)
-        input_video_ls = sorted(input_video_ls, key=lambda x: int(x.parent.parent.name))
-    elif ".txt" == input_video.suffix:
-        with open(input_video, "r") as f:
-            input_video_ls = f.readlines()
-        input_video_ls = [Path(s.strip()) for s in input_video_ls]
-    else:
-        input_video_ls = [Path(input_video)]
-
-    logging.info(f"Found {len(input_video_ls)} videos.")
-
     # -------------------- Multi-GPU Processing --------------------
-    if num_gpus > 1:
+    if input_video.is_dir() and num_gpus > 1:
+        # Scan-as-you-go mode: each GPU process scans and processes its own videos
+        # This overlaps directory scanning with model loading and inference
         mp.set_start_method("spawn", force=True)
+        logging.info(f"Starting {num_gpus} GPU processes (scan-as-you-go mode)...")
 
-        # Distribute videos evenly across GPUs
-        gpu_videos = [[] for _ in range(num_gpus)]
-        for i, video_path in enumerate(input_video_ls):
-            gpu_videos[i % num_gpus].append(video_path)
-
-        # Use Process instead of Pool to ensure each process runs on its designated GPU
         processes = []
         for gpu_id in range(num_gpus):
-            if gpu_videos[gpu_id]:  # Only start if there are videos to process
-                p = mp.Process(
-                    target=process_videos_on_gpu,
-                    args=(gpu_videos[gpu_id], args, gpu_id)
-                )
-                p.start()
-                processes.append(p)
+            p = mp.Process(
+                target=process_videos_on_gpu,
+                args=(args, gpu_id, num_gpus, str(input_video), None)
+            )
+            p.start()
+            processes.append(p)
 
         # Wait for all processes to complete
         for p in processes:
             p.join()
-    else:
-        # Single GPU or CPU processing
-        device_id = 0 if torch.cuda.is_available() else -1
-        process_videos_on_gpu(input_video_ls, args, device_id)
 
-    logging.info(f"Finished. {len(input_video_ls)} predictions are saved to {output_dir}")
+        logging.info(f"Finished processing videos from {input_video}")
+    else:
+        # Pre-scan mode: for single GPU, txt file, or single video
+        if input_video.is_dir():
+            logging.info(f"Scanning for videos in {input_video}...")
+            input_video_ls = []
+            for entry in os.scandir(input_video):
+                if entry.is_dir():
+                    video_path = Path(entry.path) / "video" / "rgb.mp4"
+                    if video_path.exists():
+                        input_video_ls.append(video_path)
+            input_video_ls = sorted(input_video_ls, key=lambda x: int(x.parent.parent.name))
+        elif ".txt" == input_video.suffix:
+            with open(input_video, "r") as f:
+                input_video_ls = f.readlines()
+            input_video_ls = [Path(s.strip()) for s in input_video_ls]
+        else:
+            input_video_ls = [Path(input_video)]
+
+        logging.info(f"Found {len(input_video_ls)} videos.")
+
+        device_id = 0 if torch.cuda.is_available() else -1
+        process_videos_on_gpu(args, device_id, 1, None, input_video_ls)
+
+        logging.info(f"Finished. {len(input_video_ls)} predictions are saved to {output_dir}")
