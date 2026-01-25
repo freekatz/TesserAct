@@ -86,7 +86,7 @@ def process_video(video_path, args, device_id, pipe=None):
         else:
             raise ValueError(f"Unsupported dtype: {args.dtype}")
 
-        pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, torch_dtype=dtype).to(device)
+        pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(device)
 
         try:
             pipe.enable_xformers_memory_efficient_attention()
@@ -582,7 +582,7 @@ if "__main__" == __name__:
                 else:
                     raise ValueError(f"Unsupported dtype: {args.dtype}")
 
-                pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, torch_dtype=dtype).to(
+                pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(
                     torch.device(f"cuda:{gpu_id}")
                 )
 
@@ -611,7 +611,7 @@ if "__main__" == __name__:
             else:
                 raise ValueError(f"Unsupported dtype: {args.dtype}")
 
-            pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, torch_dtype=dtype).to(
+            pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(
                 torch.device(f"cuda:{device_id}")
             )
 
