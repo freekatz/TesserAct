@@ -22,7 +22,6 @@ import argparse
 import logging
 import os, sys
 from pathlib import Path
-import glob
 import torch.multiprocessing as mp
 from functools import partial
 
@@ -582,16 +581,21 @@ if "__main__" == __name__:
 
     # -------------------- Data --------------------
     if input_video.is_dir():
-        # Look for videos in the specific pattern
-        input_video_ls = glob.glob(str(input_video / "**/video/rgb.mp4"), recursive=True)
-        input_video_ls = [Path(v_path) for v_path in input_video_ls]
+        # Use os.scandir for faster directory traversal (much faster than glob for large dirs)
+        logging.info(f"Scanning for videos in {input_video}...")
+        input_video_ls = []
+        for entry in os.scandir(input_video):
+            if entry.is_dir():
+                video_path = Path(entry.path) / "video" / "rgb.mp4"
+                if video_path.exists():
+                    input_video_ls.append(video_path)
+        input_video_ls = sorted(input_video_ls, key=lambda x: int(x.parent.parent.name))
     elif ".txt" == input_video.suffix:
         with open(input_video, "r") as f:
             input_video_ls = f.readlines()
         input_video_ls = [Path(s.strip()) for s in input_video_ls]
     else:
         input_video_ls = [Path(input_video)]
-    input_video_ls = sorted(input_video_ls)
 
     logging.info(f"Found {len(input_video_ls)} videos.")
 
