@@ -4,7 +4,7 @@ from pathlib import Path
 name = Path(__file__).parent.parent.name  # TesserAct (项目根目录名)
 
 tos_root = Path(os.environ.get("TOS_ROOT", "/root/tos"))
-vepfs_root = Path(os.environ.get("VEPFS_ROOT", "/vepfs"))
+vepfs_root = Path(os.environ.get("VEPFS_ROOT", "/root/vepfs"))
 
 
 def setup_environment():
