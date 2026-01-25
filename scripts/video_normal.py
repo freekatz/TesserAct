@@ -17,6 +17,8 @@ from functools import partial
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tesseract.config import PathConfig
 
+from tesseract.config import setup_environment
+setup_environment()
 
 def process_video(scene_id, data_path, pipe, latent_common, device):
     """Process a single video using the provided model."""

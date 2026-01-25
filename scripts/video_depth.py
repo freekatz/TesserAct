@@ -20,7 +20,7 @@
 
 import argparse
 import logging
-import os
+import os, sys
 from pathlib import Path
 import glob
 import torch.multiprocessing as mp
@@ -36,6 +36,11 @@ from rollingdepth import (
     RollingDepthPipeline,
 )
 
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from tesseract.config import setup_environment
+setup_environment()
 
 def str2bool(v):
     if isinstance(v, bool):
