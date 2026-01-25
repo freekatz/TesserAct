@@ -20,14 +20,39 @@ from tesseract.config import PathConfig
 from tesseract.config import setup_environment
 setup_environment()
 
-def process_video(scene_id, data_path, pipe, latent_common, device):
-    """Process a single video using the provided model."""
+def process_video(scene_id, data_path, output_root, pipe, latent_common, device, force=False):
+    """Process a single video using the provided model.
+
+    Args:
+        scene_id: Scene identifier
+        data_path: Input data path (where rgb.mp4 is located)
+        output_root: Output root path (where normal.mp4 will be saved). If None, use data_path.
+        pipe: Model pipeline
+        latent_common: Common latent tensor
+        device: Torch device
+        force: Force overwrite existing files
+    """
     scene_path = os.path.join(data_path, scene_id)
     path_in = os.path.join(scene_path, "video", "rgb.mp4")
-    path_out = os.path.join(scene_path, "video", "normal.mp4")
 
-    # Check if output file exists and is a valid video
-    if os.path.exists(path_out):
+    # Determine output path
+    if output_root is not None:
+        # Output to separate disk with same relative structure
+        out_scene_path = os.path.join(output_root, scene_id)
+        path_out = os.path.join(out_scene_path, "video", "normal.mp4")
+
+        # Move residual file from input directory to output if exists
+        residual_path = os.path.join(scene_path, "video", "normal.mp4")
+        if os.path.exists(residual_path):
+            # Create output directory if needed
+            os.makedirs(os.path.dirname(path_out), exist_ok=True)
+            print(f"Moving residual file: {residual_path} -> {path_out}")
+            shutil.move(residual_path, path_out)
+    else:
+        path_out = os.path.join(scene_path, "video", "normal.mp4")
+
+    # Check if output file exists and is a valid video (skip if --force is set)
+    if os.path.exists(path_out) and not force:
         try:
             # Try to read the file to verify it's a valid video
             test_reader = imageio.imiter(path_out)
@@ -36,6 +61,9 @@ def process_video(scene_id, data_path, pipe, latent_common, device):
         except Exception:
             # If file exists but is invalid, remove it and continue processing
             os.remove(path_out)
+
+    # Create output directory if needed
+    os.makedirs(os.path.dirname(path_out), exist_ok=True)
 
     # Read frames from MP4 file
     reader = imageio.imiter(path_in)
@@ -73,7 +101,7 @@ def process_video(scene_id, data_path, pipe, latent_common, device):
     imageio.imwrite(path_out, out, fps=30)
 
 
-def process_videos_on_gpu(scene_list, data_path, device_id, args):
+def process_videos_on_gpu(scene_list, data_path, output_root, device_id, args):
     """Process multiple videos on a specific GPU."""
     # Set device for this process
     device = torch.device(f"cuda:{device_id}")
@@ -107,7 +135,7 @@ def process_videos_on_gpu(scene_list, data_path, device_id, args):
 
     # Process all assigned videos using the same model
     for scene_id in tqdm(scene_list, desc=f"Processing videos on GPU {device_id}"):
-        process_video(scene_id, data_path, pipe, latent_common, device)
+        process_video(scene_id, data_path, output_root, pipe, latent_common, device, force=args.force)
 
 
 def main():
@@ -116,6 +144,14 @@ def main():
     parser.add_argument("--exp_name", type=str, default="default", help="Experiment name for path config")
     parser.add_argument(
         "--num_gpus", type=int, default=None, help="Number of GPUs to use. If None, uses all available GPUs."
+    )
+    parser.add_argument(
+        "--output-root", type=str, default=None,
+        help="Output root path. If specified, outputs go to this path with same relative structure, and residual files in input path are cleaned up."
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Force overwrite existing output files instead of skipping."
     )
     args = parser.parse_args()
 
@@ -153,7 +189,7 @@ def main():
             if gpu_scenes[gpu_id]:  # Only start if there are scenes to process
                 p = mp.Process(
                     target=process_videos_on_gpu,
-                    args=(gpu_scenes[gpu_id], data_path, gpu_id, args)
+                    args=(gpu_scenes[gpu_id], data_path, args.output_root, gpu_id, args)
                 )
                 p.start()
                 processes.append(p)
@@ -164,7 +200,7 @@ def main():
     else:
         # Single GPU or CPU processing
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        process_videos_on_gpu(scene_list, data_path, 0, args)
+        process_videos_on_gpu(scene_list, data_path, args.output_root, 0, args)
 
 
 if __name__ == "__main__":

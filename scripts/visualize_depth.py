@@ -126,7 +126,6 @@ def main():
     parser.add_argument("--video", "-v", action="store_true", help="Create video instead of single frame")
     parser.add_argument("--fps", type=int, default=30, help="FPS for video output (default: 30)")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output path for video")
-
     args = parser.parse_args()
 
     input_path = Path(args.input)

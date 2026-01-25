@@ -114,11 +114,24 @@ def process_videos_on_gpu(args, device_id, num_gpus, input_dir=None, video_list=
 
 def process_video(video_path, args, device_id, pipe=None):
     """Process a single video on a specific GPU."""
-    # Check if output file already exists
+    # Determine output path based on output_root
     if args.save_npy:
         rel_path = video_path.relative_to(args.input_video)
-        output_path = Path(args.output_dir) / rel_path.parent.parent / "depth/npz"
-        save_to = output_path / "depth.npz"
+        scene_rel_path = rel_path.parent.parent  # e.g., "0" or "123"
+
+        if args.output_root is not None:
+            # Output to separate disk with same relative structure
+            output_path = Path(args.output_root) / scene_rel_path / "depth/npz"
+            save_to = output_path / "depth.npz"
+
+            # Clean up residual file in input directory if exists
+            residual_path = Path(args.input_video) / scene_rel_path / "depth/npz/depth.npz"
+            if residual_path.exists():
+                logging.info(f"Removing residual file: {residual_path}")
+                residual_path.unlink()
+        else:
+            output_path = Path(args.output_dir) / scene_rel_path / "depth/npz"
+            save_to = output_path / "depth.npz"
 
         # Check if file exists and can be opened (skip if --force is set)
         if save_to.exists() and not args.force:
@@ -505,6 +518,12 @@ if "__main__" == __name__:
         "--force",
         action="store_true",
         help="Force overwrite existing depth.npz files instead of skipping.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default=None,
+        help="Output root path. If specified, outputs go to this path with same relative structure, and residual files in input path are deleted.",
     )
     parser.add_argument(
         "--seed",
