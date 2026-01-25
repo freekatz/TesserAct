@@ -472,8 +472,12 @@ class RoboDepth(RoboDataset):
         depth_array = np.load(path)["arr_0"].astype(np.float32)
         return depth_array
 
-    def get_depth_data(self, rgb_dir, rgb_video, target_size) -> Tuple[torch.Tensor, bool]:
-        depth_path = Path(str(rgb_dir).replace("video", "depth/npz").replace("rgb.mp4", "depth.npz"))
+    def get_depth_data(self, rgb_dir, rgb_video, target_size, depth_path_override: Optional[str] = None) -> Tuple[torch.Tensor, bool]:
+        # Use override path if provided (from cache), otherwise compute from rgb_dir
+        if depth_path_override is not None:
+            depth_path = Path(depth_path_override)
+        else:
+            depth_path = Path(str(rgb_dir).replace("video", "depth/npz").replace("rgb.mp4", "depth.npz"))
 
         if depth_path.exists():
             depth_video = self._read_depth_data(depth_path)  # [T, H, W]
@@ -574,7 +578,10 @@ class RoboDepthNormal(RoboDepth):
         random_flip: Optional[float] = None,
         image_to_video: bool = False,
         exp_name: str = "default",
+        cache_file: Optional[str] = None,
     ) -> None:
+        self.cache_file = cache_file
+        self.use_cache = cache_file is not None and Path(cache_file).exists()
         super().__init__(
             data_root=data_root,
             dataset_file=dataset_file,
@@ -592,8 +599,25 @@ class RoboDepthNormal(RoboDepth):
         )
 
     def _load_samples(self):
-        """Override to load additional datasets"""
-        if self.dataset_file is None or not Path(self.dataset_file).exists():
+        """Override to load additional datasets. Supports cache file for split-disk storage."""
+        # Priority: cache_file > dataset_file > scan from disk
+        if self.use_cache:
+            with open(self.cache_file, "r") as f:
+                cache = json.load(f)
+            # Convert cache format to samples format
+            # Cache sample: {scene_id, instruction, rgb_path, depth_path, normal_path}
+            self.samples = [
+                {
+                    "instruction": s["instruction"],
+                    "rgb_path": s["rgb_path"],
+                    "depth_path": s["depth_path"],
+                    "normal_path": s["normal_path"],
+                }
+                for s in cache["samples"]
+            ]
+            logger.info(f"Loaded {len(self.samples)} samples from cache: {self.cache_file}")
+            self._get_rlbench_instructions()
+        elif self.dataset_file is None or not Path(self.dataset_file).exists():
             bridge_train, bridge_test = self._load_openx_dataset_from_local_path("bridge")
             logger.info(f"Loaded {len(bridge_train)} train and {len(bridge_test)} test samples from Bridge dataset.")
             self.samples = bridge_train
@@ -635,13 +659,17 @@ class RoboDepthNormal(RoboDepth):
         target_size = DATASET2RES[target_size]
         return target_size
 
-    def get_normal_data(self, rgb_dir, rgb_video, target_size) -> Tuple[torch.Tensor, bool]:
-        if "ssv2" in str(rgb_dir):
+    def get_normal_data(self, rgb_dir, rgb_video, target_size, normal_path_override: Optional[str] = None) -> Tuple[torch.Tensor, bool]:
+        # Use override path if provided (from cache), otherwise compute from rgb_dir
+        if normal_path_override is not None:
+            normal_path = Path(normal_path_override)
+        elif "ssv2" in str(rgb_dir):
             normal_path = Path("not-exist")
         elif rgb_dir.is_dir():
             normal_path = Path(str(rgb_dir.parent).replace("rgb", "video/normal.mp4"))
         else:
             normal_path = Path(str(rgb_dir).replace("rgb.mp4", "normal.mp4"))
+
         if normal_path.exists():
             normal_frames = self._read_rgb_data(normal_path)
             normal_frames = crop_and_resize_frames(normal_frames, target_size)
@@ -661,18 +689,28 @@ class RoboDepthNormal(RoboDepth):
 
         return normal_video, normal_mask
 
-    def _preprocess_video(self, path: Path) -> torch.Tensor:
+    def _preprocess_video_with_paths(
+        self,
+        rgb_path: Path,
+        depth_path: Optional[str] = None,
+        normal_path: Optional[str] = None,
+    ) -> torch.Tensor:
         """
-        Overrides the parent class method to load both RGB and depth data and return a concatenated video.
+        Load RGB, depth, and normal data with explicit paths.
+
+        Args:
+            rgb_path: Path to RGB video
+            depth_path: Optional explicit path to depth file (from cache)
+            normal_path: Optional explicit path to normal file (from cache)
 
         Returns:
-            video: a tensor [T, H, W, 6] of concatenated RGB and depth frames.
+            image, video, mask
         """
         # ==== Load RGB frames =====
-        rgb_dir = path
+        rgb_dir = rgb_path
         frames = self._read_rgb_data(rgb_dir)
         height, width = frames[0].shape[:2]
-        target_size = self.sample_target_size(path, (height, width))
+        target_size = self.sample_target_size(rgb_path, (height, width))
         target_size = [480, 640]
         # target_size = [256, 320]
         frames = crop_and_resize_frames(frames, target_size)
@@ -684,10 +722,10 @@ class RoboDepthNormal(RoboDepth):
         rgb_mask = True
 
         # ==== Load depth data ====
-        depth_video, depth_mask = self.get_depth_data(rgb_dir, rgb_video, target_size)
+        depth_video, depth_mask = self.get_depth_data(rgb_dir, rgb_video, target_size, depth_path)
 
         # ==== Load normal data ====
-        normal_video, normal_mask = self.get_normal_data(rgb_dir, rgb_video, target_size)
+        normal_video, normal_mask = self.get_normal_data(rgb_dir, rgb_video, target_size, normal_path)
 
         # ==== Transform RGB and depth frames ====
         if 0 < abs(len(rgb_video) - len(normal_video)) < 2:
@@ -702,15 +740,30 @@ class RoboDepthNormal(RoboDepth):
         image = concatenated_video[:1].clone()
         return image, concatenated_video, mask
 
+    def _preprocess_video(self, path: Path) -> torch.Tensor:
+        """Legacy method for backward compatibility."""
+        return self._preprocess_video_with_paths(path, None, None)
+
     def getitem(self, index: int) -> Dict[str, Any]:
         if isinstance(index, list):
             # Special logic for bucket sampler
             return index
 
         sample = self.samples[index]
-        image, video, mask = self._preprocess_video(Path(sample[1]))
 
-        instruction = self.get_instruction(index)
+        # Support both old format [instruction, path] and new cache format {rgb_path, depth_path, normal_path}
+        if isinstance(sample, dict):
+            rgb_path = Path(sample["rgb_path"])
+            depth_path = sample.get("depth_path")
+            normal_path = sample.get("normal_path")
+            instruction = sample.get("instruction", "")
+            image, video, mask = self._preprocess_video_with_paths(rgb_path, depth_path, normal_path)
+            path_str = sample["rgb_path"]
+        else:
+            # Old format: [instruction, path]
+            image, video, mask = self._preprocess_video(Path(sample[1]))
+            instruction = self.get_instruction(index)
+            path_str = sample[1]
 
         return {
             "prompt": self.id_token + instruction,
@@ -722,7 +775,7 @@ class RoboDepthNormal(RoboDepth):
                 "height": video.shape[2],
                 "width": video.shape[3],
             },
-            "path": sample[1],
+            "path": path_str,
         }
 
 
