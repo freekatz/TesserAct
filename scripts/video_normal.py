@@ -133,26 +133,27 @@ def main():
         print(f"Using {num_gpus} GPUs")
 
     if num_gpus > 1:
-        # Create process pool
         mp.set_start_method("spawn", force=True)
-        with mp.Pool(num_gpus) as pool:
-            # Distribute scenes evenly across GPUs
-            scenes_per_gpu = len(scene_list) // num_gpus
-            remaining_scenes = len(scene_list) % num_gpus
 
-            start_idx = 0
-            results = []
-            for gpu_id in range(num_gpus):
-                # Calculate number of scenes for this GPU
-                num_scenes = scenes_per_gpu + (1 if gpu_id < remaining_scenes else 0)
-                gpu_scenes = scene_list[start_idx : start_idx + num_scenes]
-                start_idx += num_scenes
+        # Distribute scenes evenly across GPUs
+        gpu_scenes = [[] for _ in range(num_gpus)]
+        for i, scene_id in enumerate(scene_list):
+            gpu_scenes[i % num_gpus].append(scene_id)
 
-                results.append(pool.apply_async(process_videos_on_gpu, args=(gpu_scenes, data_path, gpu_id, args)))
+        # Use Process instead of Pool to ensure each process runs on its designated GPU
+        processes = []
+        for gpu_id in range(num_gpus):
+            if gpu_scenes[gpu_id]:  # Only start if there are scenes to process
+                p = mp.Process(
+                    target=process_videos_on_gpu,
+                    args=(gpu_scenes[gpu_id], data_path, gpu_id, args)
+                )
+                p.start()
+                processes.append(p)
 
-            # Wait for all processes to complete
-            for result in results:
-                result.get()
+        # Wait for all processes to complete
+        for p in processes:
+            p.join()
     else:
         # Single GPU or CPU processing
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

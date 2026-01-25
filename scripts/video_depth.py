@@ -53,6 +53,37 @@ def str2bool(v):
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
+def process_videos_on_gpu(video_list, args, device_id):
+    """Process multiple videos on a specific GPU.
+
+    This function should be called in a subprocess to properly utilize multi-GPU.
+    The model is loaded inside the subprocess to avoid CUDA tensor serialization issues.
+    """
+    device = torch.device(f"cuda:{device_id}")
+    torch.cuda.set_device(device)
+
+    # Load model inside subprocess
+    if "fp16" == args.dtype:
+        dtype = torch.float16
+    elif "fp32" == args.dtype:
+        dtype = torch.float32
+    else:
+        raise ValueError(f"Unsupported dtype: {args.dtype}")
+
+    logging.info(f"Loading model on GPU {device_id}...")
+    pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(device)
+
+    try:
+        pipe.enable_xformers_memory_efficient_attention()
+        logging.info(f"xformers enabled on GPU {device_id}")
+    except ImportError:
+        logging.warning(f"Run without xformers on GPU {device_id}")
+
+    # Process all videos assigned to this GPU
+    for video_path in tqdm(video_list, desc=f"GPU {device_id}"):
+        process_video(video_path, args, device_id, pipe)
+
+
 def process_video(video_path, args, device_id, pipe=None):
     """Process a single video on a specific GPU."""
     # Check if output file already exists
@@ -560,70 +591,30 @@ if "__main__" == __name__:
 
     # -------------------- Multi-GPU Processing --------------------
     if num_gpus > 1:
-        # Create process pool
         mp.set_start_method("spawn", force=True)
-        with mp.Pool(num_gpus) as pool:
-            # Map videos to GPUs
-            results = []
 
-            # Group videos by GPU
-            gpu_videos = [[] for _ in range(num_gpus)]
-            for i, video_path in enumerate(input_video_ls):
-                gpu_id = i % num_gpus
-                gpu_videos[gpu_id].append(video_path)
+        # Distribute videos evenly across GPUs
+        gpu_videos = [[] for _ in range(num_gpus)]
+        for i, video_path in enumerate(input_video_ls):
+            gpu_videos[i % num_gpus].append(video_path)
 
-            # Process videos for each GPU
-            for gpu_id in range(num_gpus):
-                # Load pipeline once per GPU
-                if "fp16" == args.dtype:
-                    dtype = torch.float16
-                elif "fp32" == args.dtype:
-                    dtype = torch.float32
-                else:
-                    raise ValueError(f"Unsupported dtype: {args.dtype}")
-
-                pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(
-                    torch.device(f"cuda:{gpu_id}")
+        # Use Process instead of Pool to ensure each process runs on its designated GPU
+        processes = []
+        for gpu_id in range(num_gpus):
+            if gpu_videos[gpu_id]:  # Only start if there are videos to process
+                p = mp.Process(
+                    target=process_videos_on_gpu,
+                    args=(gpu_videos[gpu_id], args, gpu_id)
                 )
+                p.start()
+                processes.append(p)
 
-                try:
-                    pipe.enable_xformers_memory_efficient_attention()
-                    logging.info(f"xformers enabled on GPU {gpu_id}")
-                except ImportError:
-                    logging.warning(f"Run without xformers on GPU {gpu_id}")
-
-                # Process all videos assigned to this GPU
-                for video_path in gpu_videos[gpu_id]:
-                    results.append(pool.apply_async(process_video, args=(video_path, args, gpu_id, pipe)))
-
-            # Wait for all processes to complete
-            for result in results:
-                result.get()
+        # Wait for all processes to complete
+        for p in processes:
+            p.join()
     else:
         # Single GPU or CPU processing
         device_id = 0 if torch.cuda.is_available() else -1
-        # Load pipeline once for single GPU
-        if torch.cuda.is_available():
-            if "fp16" == args.dtype:
-                dtype = torch.float16
-            elif "fp32" == args.dtype:
-                dtype = torch.float32
-            else:
-                raise ValueError(f"Unsupported dtype: {args.dtype}")
-
-            pipe = RollingDepthPipeline.from_pretrained(args.checkpoint, variant='fp16').to(
-                torch.device(f"cuda:{device_id}")
-            )
-
-            try:
-                pipe.enable_xformers_memory_efficient_attention()
-                logging.info(f"xformers enabled on GPU {device_id}")
-            except ImportError:
-                logging.warning(f"Run without xformers on GPU {device_id}")
-        else:
-            pipe = None
-
-        for video_path in tqdm(input_video_ls, desc="Processing videos"):
-            process_video(video_path, args, device_id, pipe)
+        process_videos_on_gpu(input_video_ls, args, device_id)
 
     logging.info(f"Finished. {len(input_video_ls)} predictions are saved to {output_dir}")
