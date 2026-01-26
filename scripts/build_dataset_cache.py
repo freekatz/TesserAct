@@ -168,11 +168,23 @@ def build_cache(
         "samples": samples,
     }
 
-    # Save cache
+    # Save cache as jsonl (one sample per line for efficient streaming)
     cache_path = Path(cache_file)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "w") as f:
-        json.dump(cache, f, indent=2)
+        # Write header as first line
+        header = {
+            "version": 1,
+            "created_at": datetime.now().isoformat(),
+            "rgb_root": str(rgb_root),
+            "output_root": str(output_root),
+            "total_scenes": len(scene_ids),
+            "complete_samples": len(samples),
+        }
+        f.write(json.dumps(header) + "\n")
+        # Write each sample as a separate line
+        for sample in samples:
+            f.write(json.dumps(sample) + "\n")
 
     # Print summary
     print(f"\n{'=' * 60}")
@@ -193,31 +205,31 @@ def main():
         description="Build dataset cache for RoboDepthNormal training"
     )
     parser.add_argument(
-        "--rgb-root",
+        "-i", "--rgb-root",
         type=str,
         required=True,
         help="Root directory containing RGB videos (vepfs disk)",
     )
     parser.add_argument(
-        "--output-root",
+        "-o", "--output-root",
         type=str,
         required=True,
         help="Root directory containing depth/normal outputs (tos disk)",
     )
     parser.add_argument(
-        "--cache-file",
+        "-c", "--cache-file",
         type=str,
         required=True,
-        help="Output path for cache JSON file",
+        help="Output path for cache JSONL file",
     )
     parser.add_argument(
-        "--num-workers",
+        "-w", "--num-workers",
         type=int,
         default=8,
         help="Number of parallel workers for scanning (default: 8)",
     )
     parser.add_argument(
-        "--skip-validity-check",
+        "-s", "--skip-validity-check",
         action="store_true",
         help="Skip validity check for depth/normal files (only check existence)",
     )

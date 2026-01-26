@@ -602,19 +602,18 @@ class RoboDepthNormal(RoboDepth):
         """Override to load additional datasets. Supports cache file for split-disk storage."""
         # Priority: cache_file > dataset_file > scan from disk
         if self.use_cache:
+            # Load from jsonl format (first line is header, rest are samples)
+            self.samples = []
             with open(self.cache_file, "r") as f:
-                cache = json.load(f)
-            # Convert cache format to samples format
-            # Cache sample: {scene_id, instruction, rgb_path, depth_path, normal_path}
-            self.samples = [
-                {
-                    "instruction": s["instruction"],
-                    "rgb_path": s["rgb_path"],
-                    "depth_path": s["depth_path"],
-                    "normal_path": s["normal_path"],
-                }
-                for s in cache["samples"]
-            ]
+                header = json.loads(f.readline())  # Skip header line
+                for line in f:
+                    sample = json.loads(line)
+                    self.samples.append({
+                        "instruction": sample["instruction"],
+                        "rgb_path": sample["rgb_path"],
+                        "depth_path": sample["depth_path"],
+                        "normal_path": sample["normal_path"],
+                    })
             logger.info(f"Loaded {len(self.samples)} samples from cache: {self.cache_file}")
             self._get_rlbench_instructions()
         elif self.dataset_file is None or not Path(self.dataset_file).exists():
