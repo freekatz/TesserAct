@@ -1,4 +1,9 @@
 #!/bin/bash
+# HuggingFace offline mode - skip network checks
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+
 export TORCH_LOGS="+dynamo,recompiles,graph_breaks"
 export TORCHDYNAMO_VERBOSE=1
 export WANDB_MODE="offline"

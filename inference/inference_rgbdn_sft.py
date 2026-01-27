@@ -12,7 +12,8 @@ import torch
 import cv2
 import numpy as np
 from diffusers.utils import load_image, export_to_video
-from diffusers import CogVideoXDPMScheduler
+from diffusers import CogVideoXDPMScheduler, AutoencoderKLCogVideoX
+from transformers import AutoTokenizer, T5EncoderModel
 
 from tesseract.modules.tesseract_pipeline import TesserActImageToDepthNormalVideoPipeline
 from tesseract.modules.tesseract_model import TesserActDepthNormal
@@ -57,12 +58,34 @@ def validate(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # --------------------------------------
-    # 2. Load the pipeline
+    # 2. Load pipeline components separately (to avoid downloading transformer)
     # --------------------------------------
-    print("Loading pipeline...")
-    pipe = TesserActImageToDepthNormalVideoPipeline.from_pretrained(pretrained_model_path, torch_dtype=weight_dtype).to(
-        device
+    print("Loading tokenizer...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        pretrained_model_path,
+        subfolder="tokenizer",
     )
+
+    print("Loading text encoder...")
+    text_encoder = T5EncoderModel.from_pretrained(
+        pretrained_model_path,
+        subfolder="text_encoder",
+        torch_dtype=weight_dtype,
+    ).to(device)
+
+    print("Loading VAE...")
+    vae = AutoencoderKLCogVideoX.from_pretrained(
+        pretrained_model_path,
+        subfolder="vae",
+        torch_dtype=weight_dtype,
+    ).to(device)
+
+    print("Loading scheduler...")
+    scheduler = CogVideoXDPMScheduler.from_pretrained(
+        pretrained_model_path,
+        subfolder="scheduler",
+    )
+
     print("Loading custom transformer checkpoint...")
     if os.path.exists(weights_path):
         subfolder = None
@@ -82,10 +105,16 @@ def validate(
     del transformer.patch_embed.pos_embedding
     transformer.patch_embed.use_learned_positional_embeddings = False
     transformer.config.use_learned_positional_embeddings = False
-    pipe.transformer = transformer
 
-    # Load DPMScheduler or your custom scheduler config
-    pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config)
+    # Build pipeline from components
+    print("Building pipeline...")
+    pipe = TesserActImageToDepthNormalVideoPipeline(
+        tokenizer=tokenizer,
+        text_encoder=text_encoder,
+        vae=vae,
+        transformer=transformer,
+        scheduler=scheduler,
+    )
 
     if memory_efficient:
         pipe.vae.enable_slicing()
