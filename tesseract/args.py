@@ -32,28 +32,22 @@ def _get_model_args(parser: argparse.ArgumentParser) -> None:
 
 def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help=("A folder containing the training data."),
-    )
-    parser.add_argument(
         "--dataset_file",
         type=str,
-        default="cache/samples.json",
-        help=("Path to a file if loading prompts/video paths using this format."),
+        required=True,
+        help="Path to JSONL/JSON file containing dataset samples with absolute paths.",
     )
     parser.add_argument(
         "--video_column",
         type=str,
         default="video",
-        help="The column of the dataset containing videos. Or, the name of the file in `--data_root` folder containing the line-separated path to video data.",
+        help="The column of the dataset containing videos.",
     )
     parser.add_argument(
         "--caption_column",
         type=str,
         default="text",
-        help="The column of the dataset containing the instance prompt for each video. Or, the name of the file in `--data_root` folder containing the line-separated instance prompts.",
+        help="The column of the dataset containing the instance prompt for each video.",
     )
     parser.add_argument(
         "--id_token",
@@ -65,13 +59,13 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         "--height_buckets",
         nargs="+",
         type=int,
-        default=[256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536],
+        default=[256, 320, 384, 480, 512, 576, 640, 720, 768, 960, 1024, 1280, 1536],
     )
     parser.add_argument(
         "--width_buckets",
         nargs="+",
         type=int,
-        default=[256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536],
+        default=[256, 320, 384, 480, 512, 576, 640, 720, 768, 960, 1024, 1280, 1536],
     )
     parser.add_argument(
         "--frame_buckets",
@@ -463,7 +457,7 @@ def _get_configuration_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--nccl_timeout",
         type=int,
-        default=600,
+        default=1800,
         help="Maximum timeout duration before which allgather, or related, operations fail in multi-GPU/multi-node training settings.",
     )
     parser.add_argument(

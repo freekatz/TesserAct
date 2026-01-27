@@ -13,6 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+from pathlib import Path
+
+# Add project root and tesseract directory to Python path for imports
+_TESSERACT_DIR = Path(__file__).parent.resolve()
+_PROJECT_ROOT = _TESSERACT_DIR.parent.resolve()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+if str(_TESSERACT_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESSERACT_DIR))
+
 import gc
 import cv2
 import logging
@@ -21,7 +32,6 @@ import os
 import random
 import shutil
 from datetime import timedelta
-from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
@@ -401,7 +411,7 @@ def main(args):
     load_dtype = torch.bfloat16 if "5b" in args.pretrained_model_name_or_path.lower() else torch.float16
     transformer = CogVideoXTransformer3DModel.from_pretrained_modify(
         "anyeZHY/tesseract",
-        subfolder="tesseract_v01e_rgbdn_sft",
+        subfolder="tesseract_v01e_rgb_lora",
         torch_dtype=load_dtype,
         revision=args.revision,
         variant=args.variant,
@@ -465,9 +475,15 @@ def main(args):
             "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
         )
 
+    # Synchronize all processes before moving models to GPU
+    accelerator.wait_for_everyone()
+
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     transformer.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
+
+    # Synchronize again after models are on device
+    accelerator.wait_for_everyone()
 
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
@@ -635,7 +651,6 @@ def main(args):
 
     # Dataset and DataLoader
     dataset_init_kwargs = {
-        "data_root": args.data_root,
         "dataset_file": args.dataset_file,
         "caption_column": args.caption_column,
         "video_column": args.video_column,
@@ -694,10 +709,16 @@ def main(args):
                 power=args.lr_power,
             )
 
+    # Synchronize before DDP wrapper creation
+    accelerator.wait_for_everyone()
+    logger.info(f"Rank {accelerator.process_index}: Starting accelerator.prepare()...")
+
     # Prepare everything with our `accelerator`.
     transformer, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         transformer, optimizer, train_dataloader, lr_scheduler
     )
+
+    logger.info(f"Rank {accelerator.process_index}: accelerator.prepare() completed.")
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -901,7 +922,6 @@ def main(args):
                     ],
                     dim=2,
                 )
-                (model_config.patch_size_t if hasattr(model_config, "patch_size_t") else None),
                 ofs_embed_dim = ((model_config.ofs_embed_dim if hasattr(model_config, "ofs_embed_dim") else None),)
                 ofs_emb = None if ofs_embed_dim is None else noisy_model_input.new_full((1,), fill_value=2.0)
 

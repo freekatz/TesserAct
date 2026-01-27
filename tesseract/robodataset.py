@@ -86,8 +86,7 @@ def crop_and_resize_frames(frames, target_size, interpolation="bilinear"):
 class RoboDataset(Dataset):
     def __init__(
         self,
-        data_root: str,
-        dataset_file: Optional[str] = None,
+        dataset_file: str,
         caption_column: str = "text",
         video_column: str = "video",
         max_num_frames: int = 49,
@@ -100,8 +99,6 @@ class RoboDataset(Dataset):
         image_to_video: bool = False,
     ) -> None:
         super().__init__()
-
-        self.data_root = Path(data_root)
         self.dataset_file = dataset_file
         self.caption_column = caption_column
         self.video_column = video_column
@@ -135,21 +132,36 @@ class RoboDataset(Dataset):
         self.video_transforms = transforms.Compose(transform_list)
 
     def _load_samples(self):
-        """Load samples from dataset file or local paths"""
+        """Load samples from JSONL/JSON file. File must exist."""
         if self.dataset_file is None or not Path(self.dataset_file).exists():
-            self.samples, test_samples = self._load_openx_dataset_from_local_path("bridge")
-            logger.info(f"Loaded {len(self.samples)} train and {len(test_samples)} test samples from Bridge dataset.")
+            raise FileNotFoundError(
+                f"dataset_file '{self.dataset_file}' not found. "
+                f"Please run 'python scripts/build_dataset_cache.py' first to generate it."
+            )
 
-            # Save samples to dataset file
-            random.shuffle(self.samples)
-            with open(self.dataset_file, "w") as f:
-                json.dump(self.samples, f)
-            with open(self.dataset_file.replace(".json", "_test.json"), "w") as f:
-                json.dump(test_samples, f)
+        if self.dataset_file.endswith('.jsonl'):
+            # JSONL format: first line is header, subsequent lines are samples
+            with open(self.dataset_file, "r") as f:
+                lines = f.readlines()
+            # Skip header (first line) and parse each sample
+            self.samples = []
+            for line in lines[1:]:
+                line = line.strip()
+                if line:
+                    data = json.loads(line)
+                    # Extended format: [instruction, rgb_path, depth_path, normal_path]
+                    self.samples.append([
+                        data["instruction"],
+                        data["rgb_path"],
+                        data.get("depth_path", ""),
+                        data.get("normal_path", ""),
+                    ])
         else:
+            # Standard JSON format
             with open(self.dataset_file, "r") as f:
                 self.samples = json.load(f)
-            self._get_rlbench_instructions()
+
+        self._get_rlbench_instructions()
 
     @staticmethod
     def identity_transform(x):
@@ -385,8 +397,7 @@ class RoboDataset(Dataset):
 class RoboDepth(RoboDataset):
     def __init__(
         self,
-        data_root: str,
-        dataset_file: Optional[str] = None,
+        dataset_file: str,
         caption_column: str = "text",
         video_column: str = "video",
         max_num_frames: int = 49,
@@ -399,7 +410,6 @@ class RoboDepth(RoboDataset):
         image_to_video: bool = False,
     ) -> None:
         super().__init__(
-            data_root=data_root,
             dataset_file=dataset_file,
             caption_column=caption_column,
             video_column=video_column,
@@ -414,37 +424,32 @@ class RoboDepth(RoboDataset):
         )
 
     def _load_samples(self):
-        """Override to load additional datasets"""
+        """Load samples from JSONL/JSON file. File must exist."""
         if self.dataset_file is None or not Path(self.dataset_file).exists():
-            bridge_train, bridge_test = self._load_openx_dataset_from_local_path("bridge")
-            logger.info(f"Loaded {len(bridge_train)} train and {len(bridge_test)} test samples from Bridge dataset.")
-            self.samples = bridge_train
-
-            fractal_train, fractal_test = self._load_openx_dataset_from_local_path("fractal20220817_data")
-            logger.info(
-                f"Loaded {len(fractal_train)} train and {len(fractal_test)} test samples from Fractal20220817 dataset."
+            raise FileNotFoundError(
+                f"dataset_file '{self.dataset_file}' not found. "
+                f"Please run 'python scripts/build_dataset_cache.py' first to generate it."
             )
-            self.samples += fractal_train
 
-            ssv2_train, ssv2_test = self._load_ssv2_dataset_from_local_path()
-            logger.info(f"Loaded {len(ssv2_train)} train and {len(ssv2_test)} test samples from SSV2 dataset.")
-            self.samples += ssv2_train
-
-            # Combine all test samples
-            test_samples = bridge_test + fractal_test + ssv2_test
-
-            # Save samples to dataset files
-            random.shuffle(self.samples)
-            random.shuffle(test_samples)
-
-            train_file = self.dataset_file
-            test_file = str(self.dataset_file).replace(".json", "_test.json")
-
-            with open(train_file, "w") as f:
-                json.dump(self.samples, f)
-            with open(test_file, "w") as f:
-                json.dump(test_samples, f)
+        if self.dataset_file.endswith('.jsonl'):
+            # JSONL format: first line is header, subsequent lines are samples
+            with open(self.dataset_file, "r") as f:
+                lines = f.readlines()
+            # Skip header (first line) and parse each sample
+            self.samples = []
+            for line in lines[1:]:
+                line = line.strip()
+                if line:
+                    data = json.loads(line)
+                    # Extended format: [instruction, rgb_path, depth_path, normal_path]
+                    self.samples.append([
+                        data["instruction"],
+                        data["rgb_path"],
+                        data.get("depth_path", ""),
+                        data.get("normal_path", ""),
+                    ])
         else:
+            # Standard JSON format
             with open(self.dataset_file, "r") as f:
                 self.samples = json.load(f)
 
@@ -456,13 +461,14 @@ class RoboDepth(RoboDataset):
         depth_array = np.load(path)["arr_0"].astype(np.float32)
         return depth_array
 
-    def get_depth_data(self, rgb_dir, rgb_video, target_size) -> Tuple[torch.Tensor, bool]:
-        depth_path = Path(str(rgb_dir).replace("video", "depth/npz").replace("rgb.mp4", "depth.npz"))
+    def get_depth_data(self, depth_path_str, rgb_video, target_size) -> Tuple[torch.Tensor, bool]:
+        """Load depth data from explicit path or infer from rgb path."""
+        depth_path = Path(depth_path_str) if depth_path_str else None
 
-        if depth_path.exists():
+        if depth_path and depth_path.exists():
             depth_video = self._read_depth_data(depth_path)  # [T, H, W]
             depth_video = (depth_video - depth_video.min()) / (depth_video.max() - depth_video.min() + 1e-8)
-            if "rlbench" in str(rgb_dir):
+            if "rlbench" in str(depth_path):
                 depth_video = 1 - depth_video
             depth_video *= 255.0
             depth_video = np.stack([depth_video] * 3, axis=-1)  # [T, H, W, 3]
@@ -483,18 +489,23 @@ class RoboDepth(RoboDataset):
             have_depth = False
         return depth_video, have_depth
 
-    def _preprocess_video(self, path: Path) -> torch.Tensor:
+    def _preprocess_video(self, sample) -> torch.Tensor:
         """
-        Overrides the parent class method to load both RGB and depth data and return a concatenated video.
+        Process video with explicit paths for rgb and depth.
+
+        Args:
+            sample: [instruction, rgb_path, depth_path, ...] or [instruction, rgb_path]
 
         Returns:
-            video: a tensor [T, H, W, 6] of concatenated RGB and depth frames.
+            video: a tensor [T, 6, H, W] of concatenated RGB and depth frames.
         """
+        rgb_path = Path(sample[1])
+        depth_path = sample[2] if len(sample) > 2 else ""
+
         target_size = random.choice(list(DATASET2RES.values()))
 
         # ==== Load RGB frames =====
-        rgb_dir = path
-        frames = self._read_rgb_data(rgb_dir)
+        frames = self._read_rgb_data(rgb_path)
         frames = crop_and_resize_frames(frames, target_size)
         rgb_video = [
             self.video_transforms(torch.from_numpy(img).permute(2, 0, 1).float()).unsqueeze(0) for img in frames
@@ -502,7 +513,7 @@ class RoboDepth(RoboDataset):
         rgb_video = torch.cat(rgb_video, dim=0)  # [T, 3, H, W]
 
         # ==== Load depth data ====
-        depth_video, have_depth = self.get_depth_data(rgb_dir, rgb_video, target_size)
+        depth_video, have_depth = self.get_depth_data(depth_path, rgb_video, target_size)
         concatenated_video = torch.cat((rgb_video, depth_video), dim=1)  # [T, 6, H, W]
 
         # Adjust frames to match max_num_frames
@@ -520,7 +531,7 @@ class RoboDepth(RoboDataset):
             raise NotImplementedError("Loading tensors is not supported.")
 
         sample = self.samples[index]
-        image, video, have_depth = self._preprocess_video(Path(sample[1]))
+        image, video, have_depth = self._preprocess_video(sample)
         instruction = self.get_instruction(index)
 
         return {
@@ -545,8 +556,7 @@ class RoboDepth(RoboDataset):
 class RoboDepthNormal(RoboDepth):
     def __init__(
         self,
-        data_root: str,
-        dataset_file: Optional[str] = None,
+        dataset_file: str,
         caption_column: str = "text",
         video_column: str = "video",
         max_num_frames: int = 49,
@@ -559,7 +569,6 @@ class RoboDepthNormal(RoboDepth):
         image_to_video: bool = False,
     ) -> None:
         super().__init__(
-            data_root=data_root,
             dataset_file=dataset_file,
             caption_column=caption_column,
             video_column=video_column,
@@ -574,37 +583,36 @@ class RoboDepthNormal(RoboDepth):
         )
 
     def _load_samples(self):
-        """Override to load additional datasets"""
+        """Load samples from JSONL/JSON file. File must exist."""
         if self.dataset_file is None or not Path(self.dataset_file).exists():
-            bridge_train, bridge_test = self._load_openx_dataset_from_local_path("bridge")
-            logger.info(f"Loaded {len(bridge_train)} train and {len(bridge_test)} test samples from Bridge dataset.")
-            self.samples = bridge_train
-            test_samples = bridge_test
+            raise FileNotFoundError(
+                f"dataset_file '{self.dataset_file}' not found. "
+                f"Please run 'python scripts/build_dataset_cache.py' first to generate it."
+            )
 
-            # NOTE: uncomment this when you download and preprocess the dataset
-            # fractal_train, fractal_test = self._load_openx_dataset_from_local_path("fractal20220817_data")
-            # logger.info(f"Loaded {len(fractal_train)} train and {len(fractal_test)} test samples from Fractal20220817 dataset.")
-            # self.samples += fractal_train
-            # test_samples += fractal_test
-            # rlbench_train, rlbench_test = self._load_rlbench_dataset_from_local_path()
-            # logger.info(f"Loaded {len(rlbench_train)} train and {len(rlbench_test)} test samples from RLBench dataset.")
-            # self.samples += rlbench_train
-            # test_samples += rlbench_test
-
-            # Save samples to dataset files
-            random.shuffle(self.samples)
-
-            train_file = self.dataset_file
-            test_file = str(self.dataset_file).replace(".json", "_test.json")
-
-            with open(train_file, "w") as f:
-                json.dump(self.samples, f)
-            with open(test_file, "w") as f:
-                json.dump(test_samples, f)
+        if self.dataset_file.endswith('.jsonl'):
+            # JSONL format: first line is header, subsequent lines are samples
+            with open(self.dataset_file, "r") as f:
+                lines = f.readlines()
+            # Skip header (first line) and parse each sample
+            self.samples = []
+            for line in lines[1:]:
+                line = line.strip()
+                if line:
+                    data = json.loads(line)
+                    # Extended format: [instruction, rgb_path, depth_path, normal_path]
+                    self.samples.append([
+                        data["instruction"],
+                        data["rgb_path"],
+                        data.get("depth_path", ""),
+                        data.get("normal_path", ""),
+                    ])
         else:
+            # Standard JSON format
             with open(self.dataset_file, "r") as f:
                 self.samples = json.load(f)
-            self._get_rlbench_instructions()
+
+        self._get_rlbench_instructions()
 
     def sample_target_size(self, path=None, raw_size=None):
         if raw_size is not None and random.random() < 0.5:
@@ -617,14 +625,11 @@ class RoboDepthNormal(RoboDepth):
         target_size = DATASET2RES[target_size]
         return target_size
 
-    def get_normal_data(self, rgb_dir, rgb_video, target_size) -> Tuple[torch.Tensor, bool]:
-        if "ssv2" in str(rgb_dir):
-            normal_path = Path("not-exist")
-        elif rgb_dir.is_dir():
-            normal_path = Path(str(rgb_dir.parent).replace("rgb", "video/normal.mp4"))
-        else:
-            normal_path = Path(str(rgb_dir).replace("rgb.mp4", "normal.mp4"))
-        if normal_path.exists():
+    def get_normal_data(self, normal_path_str, rgb_video, target_size) -> Tuple[torch.Tensor, bool]:
+        """Load normal data from explicit path."""
+        normal_path = Path(normal_path_str) if normal_path_str else None
+
+        if normal_path and normal_path.exists():
             normal_frames = self._read_rgb_data(normal_path)
             normal_frames = crop_and_resize_frames(normal_frames, target_size)
             normal_video = [
@@ -632,7 +637,7 @@ class RoboDepthNormal(RoboDepth):
                 for img in normal_frames
             ]
             normal_video = torch.cat(normal_video, dim=0)  # [T, 3, H, W], range [-1, 1]
-            if "rlbench" in str(rgb_dir):
+            if "rlbench" in str(normal_path):
                 mask_video = torch.sum((normal_video + 1) ** 2, axis=1) < 0.02
                 normal_video[:, 1] *= -1
                 normal_video[:, 1][mask_video] = 0.0
@@ -643,20 +648,25 @@ class RoboDepthNormal(RoboDepth):
 
         return normal_video, normal_mask
 
-    def _preprocess_video(self, path: Path) -> torch.Tensor:
+    def _preprocess_video(self, sample) -> torch.Tensor:
         """
-        Overrides the parent class method to load both RGB and depth data and return a concatenated video.
+        Process video with explicit paths for rgb, depth, normal.
+
+        Args:
+            sample: [instruction, rgb_path, depth_path, normal_path] or [instruction, rgb_path]
 
         Returns:
-            video: a tensor [T, H, W, 6] of concatenated RGB and depth frames.
+            video: a tensor [T, 9, H, W] of concatenated RGB, depth, and normal frames.
         """
+        rgb_path = Path(sample[1])
+        depth_path = sample[2] if len(sample) > 2 else ""
+        normal_path = sample[3] if len(sample) > 3 else ""
+
         # ==== Load RGB frames =====
-        rgb_dir = path
-        frames = self._read_rgb_data(rgb_dir)
+        frames = self._read_rgb_data(rgb_path)
         height, width = frames[0].shape[:2]
-        target_size = self.sample_target_size(path, (height, width))
+        target_size = self.sample_target_size(rgb_path, (height, width))
         target_size = [480, 640]
-        # target_size = [256, 320]
         frames = crop_and_resize_frames(frames, target_size)
         rgb_video = [
             self.video_transforms(torch.from_numpy(img).permute(2, 0, 1).float()).unsqueeze(0) for img in frames
@@ -666,10 +676,10 @@ class RoboDepthNormal(RoboDepth):
         rgb_mask = True
 
         # ==== Load depth data ====
-        depth_video, depth_mask = self.get_depth_data(rgb_dir, rgb_video, target_size)
+        depth_video, depth_mask = self.get_depth_data(depth_path, rgb_video, target_size)
 
         # ==== Load normal data ====
-        normal_video, normal_mask = self.get_normal_data(rgb_dir, rgb_video, target_size)
+        normal_video, normal_mask = self.get_normal_data(normal_path, rgb_video, target_size)
 
         # ==== Transform RGB and depth frames ====
         if 0 < abs(len(rgb_video) - len(normal_video)) < 2:
@@ -690,7 +700,7 @@ class RoboDepthNormal(RoboDepth):
             return index
 
         sample = self.samples[index]
-        image, video, mask = self._preprocess_video(Path(sample[1]))
+        image, video, mask = self._preprocess_video(sample)
 
         instruction = self.get_instruction(index)
 
@@ -739,6 +749,9 @@ class BucketSampler(Sampler):
                 video_metadata["width"],
             )
 
+            # Dynamically create bucket if resolution not seen before
+            if (f, h, w) not in self.buckets:
+                self.buckets[(f, h, w)] = []
             self.buckets[(f, h, w)].append(data)
             if len(self.buckets[(f, h, w)]) == self.batch_size:
                 if self.shuffle:

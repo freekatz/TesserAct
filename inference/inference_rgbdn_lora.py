@@ -1,12 +1,19 @@
 import os
 import gc
+import sys
+from pathlib import Path
+
+# Add project root to Python path for imports
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import torch
 import cv2
 import numpy as np
 from diffusers.utils import load_image, export_to_video
 from diffusers import CogVideoXDPMScheduler
 
-# export PYTHONPATH=$PYTHONPATH:./
 from tesseract.modules.tesseract_pipeline import TesserActImageToDepthNormalVideoPipeline
 from tesseract.modules.tesseract_model import TesserActDepthNormal
 from tesseract.utils import print_memory, crop_and_resize_frames
