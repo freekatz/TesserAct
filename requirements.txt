@@ -1,6 +1,7 @@
 opencv-python
+trimesh
 imageio
-imageio-ffmpeg
+imageio[ffmpeg]
 accelerate
 bitsandbytes
 datasets>=3.3.2
@@ -17,7 +18,6 @@ torchvision>=0.20.1
 torchdata>=0.10.1
 torchao>=0.7.0
 sentencepiece>=0.2.0
-imageio-ffmpeg>=0.5.1
 numpy>=1.26.4
 kornia>=0.7.3
 ruff==0.9.10

@@ -200,49 +200,239 @@ def build_cache(
     return cache
 
 
+def sample_from_cache(
+    input_cache: str,
+    output_cache: str,
+    num_samples: int,
+    method: str = "random",
+    seed: int = 42,
+) -> None:
+    """
+    Sample a subset of data from an existing cache file.
+
+    Args:
+        input_cache: Path to input JSONL cache file
+        output_cache: Path to output JSONL cache file
+        num_samples: Number of samples to select
+        method: Sampling method
+            - "random": Random sampling
+            - "first": Take first N samples
+            - "last": Take last N samples
+            - "uniform": Uniformly distributed sampling (every K-th sample)
+            - "stratified": Stratified by instruction keywords (if possible)
+        seed: Random seed for reproducibility
+    """
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+
+    # Load input cache
+    input_path = Path(input_cache)
+    if not input_path.exists():
+        print(f"Error: Input cache file not found: {input_cache}")
+        sys.exit(1)
+
+    with open(input_path, "r") as f:
+        lines = f.readlines()
+
+    # First line is header
+    header = json.loads(lines[0])
+    samples = [json.loads(line) for line in lines[1:]]
+
+    total_samples = len(samples)
+    if num_samples > total_samples:
+        print(f"Warning: Requested {num_samples} samples but only {total_samples} available")
+        num_samples = total_samples
+
+    print(f"Sampling {num_samples} from {total_samples} samples using '{method}' method...")
+
+    # Apply sampling method
+    if method == "random":
+        selected = random.sample(samples, num_samples)
+
+    elif method == "first":
+        selected = samples[:num_samples]
+
+    elif method == "last":
+        selected = samples[-num_samples:]
+
+    elif method == "uniform":
+        # Select every K-th sample
+        step = max(1, total_samples // num_samples)
+        indices = list(range(0, total_samples, step))[:num_samples]
+        selected = [samples[i] for i in indices]
+
+    elif method == "stratified":
+        # Group by instruction keywords and sample proportionally
+        from collections import defaultdict
+        keyword_groups = defaultdict(list)
+
+        # Common robot action keywords
+        keywords = ["pick", "place", "push", "pull", "open", "close", "move", "rotate", "lift", "drop"]
+
+        for sample in samples:
+            instruction = sample.get("instruction", "").lower()
+            matched = False
+            for kw in keywords:
+                if kw in instruction:
+                    keyword_groups[kw].append(sample)
+                    matched = True
+                    break
+            if not matched:
+                keyword_groups["other"].append(sample)
+
+        # Sample proportionally from each group
+        selected = []
+        group_sizes = {k: len(v) for k, v in keyword_groups.items()}
+        total_in_groups = sum(group_sizes.values())
+
+        for keyword, group in keyword_groups.items():
+            group_quota = max(1, int(num_samples * len(group) / total_in_groups))
+            group_quota = min(group_quota, len(group))
+            selected.extend(random.sample(group, group_quota))
+
+        # If we don't have enough, add more randomly
+        if len(selected) < num_samples:
+            remaining = [s for s in samples if s not in selected]
+            additional = min(num_samples - len(selected), len(remaining))
+            selected.extend(random.sample(remaining, additional))
+
+        # If we have too many, trim
+        if len(selected) > num_samples:
+            selected = random.sample(selected, num_samples)
+
+    else:
+        print(f"Error: Unknown method '{method}'")
+        print("Available strategies: random, first, last, uniform, stratified")
+        sys.exit(1)
+
+    # Sort by scene_id
+    selected.sort(key=lambda x: int(x["scene_id"]))
+
+    # Update header
+    new_header = {
+        "version": header.get("version", 1),
+        "created_at": datetime.now().isoformat(),
+        "rgb_root": header.get("rgb_root", ""),
+        "output_root": header.get("output_root", ""),
+        "total_scenes": header.get("total_scenes", 0),
+        "complete_samples": len(selected),
+        "sampled_from": str(input_path),
+        "sampling_method": method,
+        "sampling_seed": seed,
+        "original_samples": total_samples,
+    }
+
+    # Write output
+    output_path = Path(output_cache)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        f.write(json.dumps(new_header) + "\n")
+        for sample in selected:
+            f.write(json.dumps(sample) + "\n")
+
+    print(f"\n{'=' * 60}")
+    print(f"Sampling complete: {output_cache}")
+    print(f"{'=' * 60}")
+    print(f"Original samples: {total_samples}")
+    print(f"Selected samples: {len(selected)}")
+    print(f"Method:           {method}")
+    print(f"Seed:             {seed}")
+    print(f"{'=' * 60}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build dataset cache for RoboDepthNormal training"
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # Build command (original functionality)
+    build_parser = subparsers.add_parser("build", help="Build cache from directories")
+    build_parser.add_argument(
         "-i", "--rgb-root",
         type=str,
         required=True,
         help="Root directory containing RGB videos (vepfs disk)",
     )
-    parser.add_argument(
+    build_parser.add_argument(
         "-o", "--output-root",
         type=str,
         required=True,
         help="Root directory containing depth/normal outputs (tos disk)",
     )
-    parser.add_argument(
+    build_parser.add_argument(
         "-c", "--cache-file",
         type=str,
         required=True,
         help="Output path for cache JSONL file",
     )
-    parser.add_argument(
+    build_parser.add_argument(
         "-w", "--num-workers",
         type=int,
         default=8,
         help="Number of parallel workers for scanning (default: 8)",
     )
-    parser.add_argument(
+    build_parser.add_argument(
         "-s", "--skip-validity-check",
         action="store_true",
         help="Skip validity check for depth/normal files (only check existence)",
     )
 
+    # Sample command (new functionality)
+    sample_parser = subparsers.add_parser("sample", help="Sample from existing cache")
+    sample_parser.add_argument(
+        "-i", "--input-cache",
+        type=str,
+        required=True,
+        help="Input JSONL cache file",
+    )
+    sample_parser.add_argument(
+        "-o", "--output-cache",
+        type=str,
+        required=True,
+        help="Output JSONL cache file",
+    )
+    sample_parser.add_argument(
+        "-n", "--num-samples",
+        type=int,
+        required=True,
+        help="Number of samples to select",
+    )
+    sample_parser.add_argument(
+        "-m", "--method",
+        type=str,
+        default="random",
+        choices=["random", "first", "last", "uniform", "stratified"],
+        help="Sampling method (default: random)",
+    )
+    sample_parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility (default: 42)",
+    )
+
     args = parser.parse_args()
 
-    build_cache(
-        rgb_root=args.rgb_root,
-        output_root=args.output_root,
-        cache_file=args.cache_file,
-        num_workers=args.num_workers,
-        check_validity=not args.skip_validity_check,
-    )
+    if args.command == "build":
+        build_cache(
+            rgb_root=args.rgb_root,
+            output_root=args.output_root,
+            cache_file=args.cache_file,
+            num_workers=args.num_workers,
+            check_validity=not args.skip_validity_check,
+        )
+    elif args.command == "sample":
+        sample_from_cache(
+            input_cache=args.input_cache,
+            output_cache=args.output_cache,
+            num_samples=args.num_samples,
+            method=args.method,
+            seed=args.seed,
+        )
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

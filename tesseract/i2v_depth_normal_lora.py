@@ -409,13 +409,22 @@ def main(args):
     # CogVideoX-2b weights are stored in float16
     # CogVideoX-5b and CogVideoX-5b-I2V weights are stored in bfloat16
     load_dtype = torch.bfloat16 if "5b" in args.pretrained_model_name_or_path.lower() else torch.float16
+
+    base_weights_path = args.transformer_path
+    if os.path.exists(base_weights_path):
+            subfolder = None
+    else:
+        subfolder = base_weights_path.split("/")[-1]
+        base_weights_path = "/".join(base_weights_path.split("/")[:-1])
+    print(f"Loading base weights from {base_weights_path}, subfolder: {subfolder}")
     transformer = CogVideoXTransformer3DModel.from_pretrained_modify(
-        "anyeZHY/tesseract",
-        subfolder="tesseract_v01e_rgb_lora",
-        torch_dtype=load_dtype,
-        revision=args.revision,
-        variant=args.variant,
-    )
+            base_weights_path,
+            subfolder=subfolder,
+            torch_dtype=load_dtype,
+            revision=args.revision,
+            variant=args.variant,
+        )
+    logger.info(f"Loaded transformer from {args.transformer_path}")
 
     if args.ignore_learned_positional_embeddings:
         del transformer.patch_embed.pos_embedding

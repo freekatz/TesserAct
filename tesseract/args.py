@@ -28,6 +28,15 @@ def _get_model_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="The directory where the downloaded models and datasets will be stored.",
     )
+    parser.add_argument(
+        "--transformer_path",
+        type=str,
+        default=None,
+        help=(
+            "Path to transformer weights. If not specified, will load from anyeZHY/tesseract. "
+            "Set to 'cogvideox' to train from scratch using CogVideoX transformer weights."
+        ),
+    )
 
 
 def _get_dataset_args(parser: argparse.ArgumentParser) -> None:

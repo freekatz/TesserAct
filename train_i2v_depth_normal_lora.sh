@@ -32,10 +32,13 @@ NODE_RANK=$SLURM_NODEID
 
 NUM_GPUS=$(nvidia-smi -L | wc -l)
 
+# TRANSFORMER_PATH="anyeZHY/tesseract/tesseract_v01e_rgb_lora"
+
 torchrun --nproc_per_node=$NUM_GPUS --master_port=29500 \
   tesseract/i2v_depth_normal_lora.py \
   --pretrained_model_name_or_path THUDM/CogVideoX-5b-I2V \
-  --dataset_file data-cache.jsonl \
+  --transformer_path $TRANSFORMER_PATH \
+  --dataset_file $CACHEFILE_PATH \
   --output_dir ./output/lora \
   --height_buckets 240 256 480 512 720 \
   --width_buckets 320 512 640 854 1280 \

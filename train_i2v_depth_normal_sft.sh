@@ -32,10 +32,13 @@ NODE_RANK=$SLURM_NODEID
 
 NUM_GPUS=$(nvidia-smi -L | wc -l)
 
+# TRANSFORMER_PATH="anyeZHY/tesseract/tesseract_v01e_rgbdn_sft"
+
 torchrun --nproc_per_node=$NUM_GPUS --master_port=29501 \
   tesseract/i2v_depth_normal_sft.py \
   --pretrained_model_name_or_path THUDM/CogVideoX-5b-I2V \
-  --dataset_file data-cache.jsonl \
+  --transformer_path $TRANSFORMER_PATH \
+  --dataset_file $CACHEFILE_PATH \
   --output_dir ./output/sft \
   --height_buckets 240 256 480 512 720 \
   --width_buckets 320 512 640 854 1280 \
@@ -49,9 +52,9 @@ torchrun --nproc_per_node=$NUM_GPUS --master_port=29501 \
   --max_num_frames 49 \
   --train_batch_size 1 \
   --max_train_steps 200000 \
-  --checkpointing_steps 250 \
+  --checkpointing_steps 200 \
   --checkpoints_total_limit 15 \
-  --validation_steps 250 \
+  --validation_steps 200 \
   --gradient_accumulation_steps 1 \
   --learning_rate 5e-5 \
   --lr_scheduler constant_with_warmup \
